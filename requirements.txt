@@ -4,3 +4,6 @@ pandas==3.0.2
 pydantic_settings==2.13.1
 spacy==3.7.5
 streamlit==1.56.0
+sentence-transformers
+pysqlite3-binary
+vllm
