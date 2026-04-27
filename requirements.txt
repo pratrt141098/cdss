@@ -4,3 +4,5 @@ pandas==3.0.2
 pydantic_settings==2.13.1
 https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_sm-0.5.4.tar.gz
 streamlit==1.56.0
+rouge_score
+bert_score

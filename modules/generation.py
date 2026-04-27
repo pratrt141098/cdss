@@ -47,7 +47,8 @@ class GenerationModule(BaseModule):
         return f"""You are a clinical decision support assistant helping clinicians quickly understand a patient's condition.
 
 Use ONLY the patient records below to answer. Do not use external medical knowledge.
-If the answer is not in the records, say: "This information is not available in the provided records."
+Important: these records are from a de-identified dataset. Patient ages, names, and dates have been removed and may appear as blank spaces or truncated phrases (e.g. "year old female"). Treat such fragments as valid clinical content and answer from whatever information is present.
+Only say "This information is not available in the provided records." if the topic is genuinely absent — not because a sentence looks incomplete.
 Be concise and clinical in tone.
 
 PATIENT RECORDS:

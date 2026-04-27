@@ -17,7 +17,7 @@ st.set_page_config(
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("⚙️ Settings")
-    n_patients  = st.slider("Patients to load", 5, 50, 10, step=5)
+    n_patients  = st.slider("Rows to load (admissions)", 50, 500, 147, step=50)
     n_results   = st.slider("Retrieved chunks", 3, 10, 5)
 
     if st.button("🔄 Reload pipeline", use_container_width=True):

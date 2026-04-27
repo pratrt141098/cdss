@@ -27,10 +27,11 @@ class DataIngestionModule(BaseModule):
     def process(self, input_data: Optional[int] = None) -> dict[str, PatientRecord]:
         """
         Loads MIMIC-IV CSVs and returns a dict of hadm_id -> PatientRecord.
-        Pass input_data as a row limit for dev (e.g. 100). None = full dataset.
+        Pass input_data as a row limit for dev (e.g. 147). None = full dataset.
         """
         admissions = self._load_admissions(input_data)
-        notes = self._load_notes(input_data)
+        hadm_ids = set(admissions["hadm_id"].astype(str))
+        notes = self._load_notes(hadm_ids)
         diagnoses = self._load_diagnoses()
         medications = self._load_medications()
 
@@ -69,13 +70,16 @@ class DataIngestionModule(BaseModule):
     def _load_admissions(self, limit: Optional[int]) -> pd.DataFrame:
         path = self.mimic_dir / "hosp" / "admissions.csv"
         df = pd.read_csv(path, nrows=limit)
-        print(f"[{self.name}] admissions: {len(df)} rows")
+        n_unique = df["subject_id"].nunique()
+        print(f"[{self.name}] admissions: {len(df)} rows ({n_unique} unique patients)")
         return df
 
-    def _load_notes(self, limit: Optional[int]) -> pd.DataFrame:
+    def _load_notes(self, hadm_ids: set) -> pd.DataFrame:
         path = self.mimic_dir / "note" / "discharge.csv"
-        df = pd.read_csv(path, nrows=limit)
-        print(f"[{self.name}] discharge notes: {len(df)} rows")
+        chunks = pd.read_csv(path, chunksize=10_000, usecols=["hadm_id", "text"])
+        matched = [chunk[chunk["hadm_id"].astype(str).isin(hadm_ids)] for chunk in chunks]
+        df = pd.concat(matched, ignore_index=True) if matched else pd.DataFrame(columns=["hadm_id", "text"])
+        print(f"[{self.name}] discharge notes: {len(df)} rows for {df['hadm_id'].nunique()} admissions")
         return df
 
     def _load_diagnoses(self) -> pd.DataFrame:
