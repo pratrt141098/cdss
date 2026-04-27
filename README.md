@@ -268,49 +268,6 @@ The answer prompt explicitly instructs the model to:
 - answer only from the provided patient context
 - say it cannot determine the answer if the context is insufficient
 
-## Reproducibility Notes
-
-To reproduce the project as closely as possible:
-
-1. Use the exact dependency versions in `requirements.txt`.
-2. Install the extra runtime packages listed above.
-3. Download the spaCy model before running NER.
-4. Keep MIMIC-IV in the expected directory structure.
-5. Use the same ChromaDB persist directory if you want retrieval results to survive reruns.
-6. Be aware that `vllm` is the most hardware-sensitive dependency in the stack.
-
-The generated answers will still vary slightly across runs because the model is probabilistic, but the retrieval corpus and index should be reproducible if the data and environment stay fixed.
-
-## Troubleshooting
-
-### `en_core_sci_sm` is missing
-
-Install it with:
-
-```bash
-python -m spacy download en_core_sci_sm
-```
-
-### `sqlite3` import problems
-
-The project patches SQLite to use `pysqlite3`. Make sure `pysqlite3-binary` is installed in the active environment.
-
-### No data is loaded
-
-Check that the local MIMIC-IV files exist under `./data/mimic` and that the file names match the expected layout.
-
-### `vllm` fails to start
-
-This is usually an environment or hardware issue rather than an application bug. `vllm` is most reliable on Linux with a compatible GPU.
-
-### Retrieval returns empty or poor results
-
-Confirm that:
-
-- the vector store was built successfully
-- the query is being embedded with the same embedding model used during indexing
-- the `hadm_id` filter is not excluding the relevant patient
-
 ## Testing And Validation
 
 The repo currently includes manual smoke-check scripts and placeholder test files.
@@ -336,12 +293,4 @@ Do not commit:
 
 Keep everything local and handle the dataset according to the access and governance requirements that apply to your environment.
 
-## Current Status
 
-The codebase is already organized around a modular local RAG workflow, but some folders are still scaffolding for future expansion:
-
-- `api/`
-- `pipeline/`
-- `scripts/`
-
-The current working path is the Streamlit application and the modules under `modules/`.
