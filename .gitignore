@@ -1,12 +1,26 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
 *.pyo
-.env
-data/mimic/
-chroma_db/
-eval/results/
-.DS_Store
+*.pyd
 *.egg-info/
 dist/
+.eggs/
+
+# Environment
+.env
+
+# MIMIC-IV data (PhysioNet credentialed — never commit)
+data/mimic/
+data/synthetic/
+
+# Generated artifacts
+chroma_db/
+eval/results/
+*.log
+
+# macOS / IDE
+.DS_Store
 .ipynb_checkpoints/
+.vscode/
