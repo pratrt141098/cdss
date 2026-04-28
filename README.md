@@ -67,6 +67,8 @@ Configuration is centralized in **`config/settings.py`** (Pydantic Settings, opt
 ```bash
 conda activate cdss   # or your preferred env with Python 3.11+
 pip install -r requirements.txt   # installs en_core_sci_sm from the SciSpaCy release URL
+# Optional — notebooks / evaluation plotting (matplotlib, Jupyter kernel):
+pip install -r requirements-dev.txt
 
 ollama serve
 ollama pull nomic-embed-text
@@ -107,6 +109,34 @@ cd frontend && npm run build
 ```
 
 Serve the `frontend/dist/` assets behind any static host; point `CDSS_CORS_ORIGINS` at that origin.
+
+#### Deploying the frontend to Vercel (static app only)
+
+**What fits Vercel:** The React UI is a **`npm run build`** output (`frontend/dist/`). Vercel detects **Vite** and deploys static assets + edge CDN. Set the Vercel project **Root Directory** to **`frontend`** (this repo is a monolith; the app is not at the repo root).
+
+**What does *not* belong on Vercel (with the current architecture):**
+
+| Piece | Why |
+| --- | --- |
+| **FastAPI / Uvicorn** | Long-lived process; Vercel Functions are short-lived, CPU/memory/time limits, cold starts — a poor match for a multi-minute pipeline build and Chroma queries. |
+| **Ollama** | Runs as a daemon with local models; not available in Vercel’s runtime. |
+| **ChromaDB** | Persistent on-disk store; serverless has no durable local volume for this use case. |
+| **spaCy + MIMIC ingestion** | Heavy images and long startup; ill-suited to function bundles. |
+
+So this is a **hybrid** deployment: **Vercel = UI only**; **API + RAG** run on a VM, container host, or managed service that supports persistent disk and your chosen inference stack (see [Roadmap](#roadmap-and-known-gaps)).
+
+**Steps (UI on Vercel, API elsewhere):**
+
+1. Deploy the API to a host that can run Python + Ollama + Chroma + data (e.g. a dedicated server, **Fly.io** / **Railway** / **Render** with a volume, AWS/GCP VM with GPU if you scale models). Expose HTTPS, e.g. `https://api.example.com`.
+2. In the Vercel project for **`frontend`**, add an environment variable:  
+   **`VITE_API_URL`=`https://api.example.com`**  
+   (no trailing slash; see `frontend/src/api/client.ts`).
+3. On the API server, set **`CDSS_CORS_ORIGINS`** to include your Vercel origin, e.g. `https://your-app.vercel.app` (and preview URLs if you use them: `https://your-app-*.vercel.app` or list each).
+4. Trigger a redeploy so the client bundle picks up `VITE_*` at build time.
+
+**HTTPS:** Browsers require **HTTPS** on the page for many features; mixed-content rules may block `http://` API URLs from an `https://` Vercel app — put TLS on the API or use a tunnel for demos.
+
+**Previews:** Each Vercel preview URL is a different origin; either add wildcard CORS carefully or use a single staging API with fixed preview domains.
 
 ### Option B — Streamlit (single-process)
 
@@ -271,6 +301,7 @@ cdss/
 │   └── CDSS_Evaluation_Walkthrough.ipynb
 ├── app.py                   # Streamlit (legacy / alternative UI)
 ├── requirements.txt
+├── requirements-dev.txt        # Jupyter + matplotlib (evaluation notebook)
 └── README.md
 ```
 
