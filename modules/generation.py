@@ -13,24 +13,52 @@ class GenerationModule(BaseModule):
         super().__init__(config)
         self.model = self.config.get("generation_model", "llama3.2:3b")
 
+    def _build_messages(self, input_data: dict) -> list[dict]:
+        """
+        Build the message list for the Ollama chat call.
+
+        If input_data contains a non-empty "history" list of prior
+        {"role": ..., "content": ...} turns, they are prepended before
+        the current user prompt so the LLM has conversation context.
+        """
+        query   = input_data["query"]
+        chunks  = input_data["context_chunks"]
+        history = input_data.get("history", [])
+
+        context = self._build_context(chunks)
+        prompt  = self._build_prompt(query, context)
+
+        return list(history) + [{"role": "user", "content": prompt}]
+
     def process(self, input_data: dict) -> str:
         """
         input_data: {
             "query":          str,
-            "context_chunks": list[dict]  — from VectorStoreModule.query()
+            "context_chunks": list[dict],
+            "history":        list[dict]  — optional prior turns
         }
         returns: str response
         """
-        query   = input_data["query"]
-        chunks  = input_data["context_chunks"]
-        context = self._build_context(chunks)
-        prompt  = self._build_prompt(query, context)
-
         response = ollama.chat(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=self._build_messages(input_data),
         )
         return response["message"]["content"]
+
+    def stream(self, input_data: dict):
+        """
+        Streaming variant of process(). Yields text tokens as they are generated
+        so the caller can render them incrementally (e.g. via st.write_stream).
+        Accepts the same optional "history" key as process().
+        """
+        for chunk in ollama.chat(
+            model=self.model,
+            messages=self._build_messages(input_data),
+            stream=True,
+        ):
+            token = chunk["message"]["content"]
+            if token:
+                yield token
 
     def _build_context(self, chunks: list[dict]) -> str:
         parts = []

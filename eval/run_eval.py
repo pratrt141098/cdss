@@ -34,20 +34,35 @@ RESULTS_DIR = Path(__file__).parent / "results"
 
 # ── Serialisation helpers ────────────────────────────────────────────────────
 
+def _slim_chunks(chunks: list) -> list:
+    return [
+        {
+            "chunk_id": c.get("chunk_id"),
+            "section":  c.get("metadata", {}).get("section"),
+            "hadm_id":  c.get("metadata", {}).get("hadm_id"),
+            "score":    round(c.get("score", 0), 4),
+        }
+        for c in chunks
+    ]
+
+
 def _result_to_dict(r: RetrievalResult | GenerationResult) -> dict:
     d = dataclasses.asdict(r)
-    # Strip raw chunk texts from retrieval results to keep JSON tidy
-    for key in ("rag_retrieved", "kw_retrieved", "retrieved_chunks"):
+    for key in ("rag_retrieved", "scoped_retrieved", "kw_retrieved",
+                "routed_retrieved", "fusion_retrieved", "retrieved_chunks"):
         if key in d:
-            d[key] = [
-                {
-                    "chunk_id": c.get("chunk_id"),
-                    "section":  c.get("metadata", {}).get("section"),
-                    "hadm_id":  c.get("metadata", {}).get("hadm_id"),
-                    "score":    round(c.get("score", 0), 4),
-                }
-                for c in d[key]
-            ]
+            d[key] = _slim_chunks(d[key])
+    # hybrid_by_alpha has float keys → convert to strings for JSON
+    if "hybrid_by_alpha" in d:
+        d["hybrid_by_alpha"] = {
+            str(alpha): {
+                "precision": round(v["precision"], 4),
+                "recall":    round(v["recall"],    4),
+                "tp":        v["tp"],
+                "chunks":    _slim_chunks(v.get("chunks", [])),
+            }
+            for alpha, v in d["hybrid_by_alpha"].items()
+        }
     return d
 
 
@@ -61,31 +76,48 @@ def _row(cells: list[str], widths: list[int]) -> str:
     return "│".join(f" {c:<{w}} " for c, w in zip(cells, widths))
 
 
+def _best_hybrid(r: RetrievalResult) -> tuple[float, float]:
+    """Return (precision, recall) for the alpha with highest recall, then precision."""
+    if not r.hybrid_by_alpha:
+        return 0.0, 0.0
+    best = max(r.hybrid_by_alpha.values(), key=lambda v: (v["recall"], v["precision"]))
+    return best["precision"], best["recall"]
+
+
 def print_retrieval_table(
     results: list[RetrievalResult],
     agg: dict,
 ) -> None:
+    from eval.retrieval_eval import HYBRID_ALPHAS
+
+    best_alpha = max(
+        HYBRID_ALPHAS,
+        key=lambda a: agg.get(f"hybrid_alpha{a}_mean_recall", 0),
+    )
+
     cols = ["ID", "Section", "Rel",
-            "RAG P", "RAG R",
-            "Scoped P", "Scoped R",
-            "KW P", "KW R"]
+            "RAG R", "Scoped R", "KW R",
+            "Routed R", "Routed?",
+            f"Hyb-{best_alpha} R",
+            "Fusion R"]
     rows = [
         [
             r.query_id,
             r.expected_section[:22],
             str(r.total_relevant),
-            f"{r.rag_precision:.2f}",
             f"{r.rag_recall:.2f}",
-            f"{r.scoped_precision:.2f}",
             f"{r.scoped_recall:.2f}",
-            f"{r.kw_precision:.2f}",
             f"{r.kw_recall:.2f}",
+            f"{r.routed_recall:.2f}",
+            r.routed_section[:12] if r.routed_section else "—",
+            f"{r.hybrid_by_alpha.get(best_alpha, {}).get('recall', 0.0):.2f}",
+            f"{r.fusion_recall:.2f}",
         ]
         for r in results
     ]
     widths = [max(len(cols[i]), max(len(row[i]) for row in rows)) for i in range(len(cols))]
 
-    print("\n── RETRIEVAL EVALUATION ────────────────────────────────────────")
+    print("\n── RETRIEVAL EVALUATION ────────────────────────────────────────────────────")
     print(_row(cols, widths))
     print(_hline(widths))
     for row in rows:
@@ -93,14 +125,20 @@ def print_retrieval_table(
     print(_hline(widths))
     print(_row(
         ["MEAN", "", "",
-         f"{agg['rag_mean_precision']:.2f}",
          f"{agg['rag_mean_recall']:.2f}",
-         f"{agg['scoped_mean_precision']:.2f}",
          f"{agg['scoped_mean_recall']:.2f}",
-         f"{agg['kw_mean_precision']:.2f}",
-         f"{agg['kw_mean_recall']:.2f}"],
+         f"{agg['kw_mean_recall']:.2f}",
+         f"{agg['routed_mean_recall']:.2f}",
+         f"cov={agg['routed_coverage']:.0%}",
+         f"{agg.get(f'hybrid_alpha{best_alpha}_mean_recall', 0.0):.2f}",
+         f"{agg['fusion_mean_recall']:.2f}"],
         widths,
     ))
+    print(f"\n  Hybrid alpha sweep — "
+          + "  ".join(
+              f"α={a}: R={agg.get(f'hybrid_alpha{a}_mean_recall', 0):.2f}"
+              for a in HYBRID_ALPHAS
+          ))
 
 
 def print_generation_table(
@@ -195,6 +233,19 @@ def save_csv(
                 "scoped_recall":       round(r.scoped_recall,    4),
                 "kw_precision":        round(r.kw_precision,     4),
                 "kw_recall":           round(r.kw_recall,        4),
+                "routed_section":      r.routed_section or "",
+                "routed_precision":    round(r.routed_precision, 4),
+                "routed_recall":       round(r.routed_recall,    4),
+                "fusion_precision":    round(r.fusion_precision, 4),
+                "fusion_recall":       round(r.fusion_recall,    4),
+                **{
+                    f"hybrid_a{a}_precision": round(r.hybrid_by_alpha.get(a, {}).get("precision", 0), 4)
+                    for a in [0.3, 0.5, 0.7]
+                },
+                **{
+                    f"hybrid_a{a}_recall": round(r.hybrid_by_alpha.get(a, {}).get("recall", 0), 4)
+                    for a in [0.3, 0.5, 0.7]
+                },
             })
         if qid in gen_map:
             g = gen_map[qid]

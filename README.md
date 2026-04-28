@@ -25,8 +25,8 @@ DataIngestionModule → PreprocessingModule → NERModule → EmbeddingModule �
 | `PreprocessingModule` | Parses discharge notes by clinical section (16 MIMIC-IV sections), chunks into ~512 token overlapping segments |
 | `NERModule` | Extracts clinical entities (medications, diseases, anatomy, procedures) using `en_core_sci_sm` |
 | `EmbeddingModule` | Embeds chunks using `nomic-embed-text` via Ollama with `search_document` / `search_query` prefixes for asymmetric RAG retrieval |
-| `VectorStoreModule` | Persists embeddings in ChromaDB with cosine similarity; supports global and `hadm_id`-scoped retrieval |
-| `GenerationModule` | Generates grounded clinical answers using `llama3.2:3b` via Ollama; prompt handles MIMIC-IV de-identification artefacts |
+| `VectorStoreModule` | Persists embeddings in ChromaDB with cosine similarity; supports global, `hadm_id`-scoped, section-routed, hybrid, and RAG-Fusion retrieval |
+| `GenerationModule` | Streams grounded clinical answers using `llama3.2:3b` via Ollama; prompt handles MIMIC-IV de-identification artefacts |
 
 ---
 
@@ -35,7 +35,7 @@ DataIngestionModule → PreprocessingModule → NERModule → EmbeddingModule �
 - **Models**: `en_core_sci_sm` (NER), `nomic-embed-text` (embeddings), `llama3.2:3b` (generation)
 - **Vector store**: ChromaDB (persistent, local)
 - **Runtime**: Ollama (fully local, no API keys)
-- **Frontend**: Streamlit
+- **Frontend**: Streamlit (streaming responses)
 - **Data**: MIMIC-IV (PhysioNet credentialed access)
 
 ---
@@ -58,6 +58,25 @@ The sidebar **"Rows to load"** slider controls how many rows are read from
 loaded by filtering on the resulting `hadm_id` set — not by a separate `nrows`
 limit — ensuring every ingested admission has its notes attached.
 
+The **RAG-Fusion (cross-patient)** toggle enables entity-extraction-based patient
+matching: the LLM extracts clinical entities from the query, scores all patients
+by entity overlap against their stored NER metadata, and scopes retrieval to the
+best match — no `hadm_id` required from the user.
+
+---
+
+## Retrieval Strategies
+
+The system implements five retrieval strategies, selectable per query:
+
+| Strategy | Mechanism | When it fires |
+|---|---|---|
+| **Section router** | Metadata `WHERE` fetch by section slug | Query contains structured keywords (allergies, medications, diagnosis) |
+| **Scoped vector search** | Cosine similarity filtered to `hadm_id` | Single-patient mode, non-structured queries |
+| **Hybrid** | `α · vector + (1-α) · keyword` re-rank | Scoped mode; α swept at eval time |
+| **Entity-match cross-patient** | LLM entity extraction → patient scoring → scoped retrieval | Cross-patient mode, entity matches found |
+| **RAG-Fusion fallback** | 3 query variants + RRF, unscoped | Cross-patient mode, no entity matches |
+
 ---
 
 ## Evaluation Framework
@@ -72,7 +91,7 @@ conda activate cdss
 # Full run (retrieval + generation, ~15 min)
 python -m eval.run_eval
 
-# Retrieval only (fast, no LLM calls, ~30 sec)
+# Retrieval only (fast, no LLM generation calls, ~5 min)
 python -m eval.run_eval --retrieval-only
 
 # Generation only
@@ -89,17 +108,21 @@ by sorted order in the `cdss_147` ChromaDB collection). Sections covered:
 `discharge_diagnosis`, `discharge_medications`, `medications_on_admission`,
 `allergies`, `history_of_present_illness`.
 
-### Retrieval results (cdss_147, 1,193 chunks, 30 patients)
+### Retrieval results (cdss_147, 1,193 chunks, 30 patients, top-k = 10)
 
-| Strategy | Mean Precision | Mean Recall |
-|---|---|---|
-| RAG — global (no patient filter) | 0.02 | 0.10 |
-| **RAG — scoped to `hadm_id`** | **0.19** | **0.95** |
-| Keyword baseline (global) | 0.16 | 0.80 |
+| Strategy | Mean Precision | Mean Recall | Notes |
+|---|---|---|---|
+| RAG — global (no filter) | 0.02 | 0.20 | Baseline; fails cross-patient |
+| Keyword baseline (global) | 0.09 | 0.90 | Strong on structured sections |
+| **RAG — scoped to `hadm_id`** | **0.10** | **1.00** | Perfect recall; precision low at k=10 |
+| **Section router** | **1.00** | **1.00** | 17/20 queries routed; deterministic |
+| Hybrid (α=0.3–0.7, scoped) | 0.10 | 1.00 | α-invariant at this scale |
+| RAG-Fusion (unscoped) | 0.01 | 0.05 | Worse than global RAG — see note |
 
-Scoped retrieval mirrors the app's "Single patient" mode and achieves 0.95
-recall. Global RAG fails because patient-specific queries contain no identifier,
-so the embedder matches semantically similar chunks from other patients.
+> **RAG-Fusion negative result**: query variants are equally patient-agnostic as
+> the original query. RRF merges lists that each surface *different* patients'
+> chunks at rank 1, so the target patient's chunk never concentrates enough rank
+> signal to surface. Entity-extraction matching solves this correctly.
 
 ### Generation results (scoped RAG vs no-RAG baseline)
 
@@ -118,16 +141,13 @@ No-RAG produces generic clinical answers (instructed to answer from general
 medical knowledge); RAG produces patient-specific answers grounded in the
 retrieved discharge note text. The gap is +0.35 ROUGE-1, +0.08 BERTScore.
 
-One query remains flagged (Q19 — Corgard/Vasotec allergy entry; 5-word chunk
-too short for reliable semantic retrieval).
-
 ---
 
 ## Repository Layout
 
 ```
 cdss/
-├── app.py                        # Streamlit UI
+├── app.py                        # Streamlit UI (streaming, cross-patient mode)
 ├── config/
 │   └── settings.py               # Pydantic settings (reads .env)
 ├── modules/
@@ -136,13 +156,16 @@ cdss/
 │   ├── preprocessing.py
 │   ├── ner.py
 │   ├── embedding.py
-│   ├── vector_store.py
-│   └── generation.py
+│   ├── vector_store.py           # hybrid_query, rag_fusion_query, get_by_section
+│   ├── generation.py             # streaming via ollama stream=True
+│   ├── query_router.py           # regex section router (17/20 eval queries routed)
+│   ├── query_expansion.py        # generate_query_variants + reciprocal_rank_fusion
+│   └── patient_matcher.py        # cross-patient entity extraction + patient scoring
 ├── eval/
 │   ├── query_set.py              # 20 ground-truth queries
-│   ├── retrieval_eval.py         # RAG global / scoped / keyword baseline
+│   ├── retrieval_eval.py         # 5 strategies: RAG / scoped / KW / routed / hybrid / fusion
 │   ├── generation_eval.py        # ROUGE, BERTScore, faithfulness
-│   └── run_eval.py               # Master script
+│   └── run_eval.py               # Master script with full summary table
 ├── notebooks/
 │   └── CDSS_Evaluation_Walkthrough.ipynb
 └── requirements.txt
@@ -153,10 +176,9 @@ cdss/
 ## Pending Work
 
 ### Short Term
-- [ ] Section-routing fallback: directly fetch `allergies` chunk when query contains "allerg" (fixes Q19 miss)
-- [ ] Hybrid retrieval: blend scoped vector scores with keyword hit counts for structured vs narrative sections
-- [ ] Scale eval to 500+ patients for statistically robust metrics
-- [ ] Add streaming to `GenerationModule` so responses render token-by-token in Streamlit
+- [ ] Section-router coverage: extend patterns to `history_of_present_illness` keyword triggers (currently 3/20 queries fall through to vector search by design)
+- [ ] Hybrid α selection: run eval in unscoped mode or on multi-chunk sections to find a meaningful α signal
+- [ ] Conversation memory: maintain patient context across multi-turn queries in Streamlit
 
 ### Production (Flask + React + BU SCC)
 - [ ] Swap Streamlit for Flask REST API (`/api/query`, `/api/ingest`, `/api/patients`)
@@ -164,3 +186,4 @@ cdss/
 - [ ] Deploy on BU SCC with GPU node for `llama3.1:70b` and `vllm` serving
 - [ ] Swap `en_core_sci_sm` for `en_ner_bc5cdr_md` for typed clinical NER labels
 - [ ] Add HIPAA compliance layer — audit logging, role-based access, de-identification check
+- [ ] Scale eval to 500+ patients for statistically robust metrics
