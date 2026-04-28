@@ -85,6 +85,29 @@ class VectorStoreModule(BaseModule):
             })
         return chunks
 
+    def get_patient_entities(self, hadm_id: str) -> dict:
+        """
+        Aggregate all NER entities across every chunk for a patient.
+        Uses ChromaDB get() (no embedding needed) with a metadata filter.
+        """
+        results = self.collection.get(
+            where={"hadm_id": hadm_id},
+            include=["metadatas"],
+        )
+        buckets: dict[str, set] = {
+            "medications": set(),
+            "diseases":    set(),
+            "procedures":  set(),
+            "anatomy":     set(),
+        }
+        for meta in results.get("metadatas") or []:
+            for key in buckets:
+                for item in meta.get(key, "").split(", "):
+                    item = item.strip()
+                    if item:
+                        buckets[key].add(item)
+        return {k: sorted(v) for k, v in buckets.items()}
+
     def reset(self):
         self.collection.delete(where={"hadm_id": {"$ne": ""}})
         print(f"[{self.name}] Collection cleared")

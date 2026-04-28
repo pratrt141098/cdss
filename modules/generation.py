@@ -43,6 +43,14 @@ class GenerationModule(BaseModule):
             )
         return "\n\n".join(parts)
 
+    def generate_raw(self, prompt: str) -> str:
+        """Send a raw prompt without any RAG wrapping — for structured summaries."""
+        response = ollama.chat(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response["message"]["content"]
+
     def _build_prompt(self, query: str, context: str) -> str:
         return f"""You are a clinical decision support assistant helping clinicians quickly understand a patient's condition.
 

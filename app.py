@@ -50,18 +50,8 @@ with st.spinner("Loading pipeline... this may take a minute on first run."):
 st.title("🏥 Clinical Decision Support System")
 st.caption("Ask questions about patient records. Answers are grounded in discharge notes only.")
 
-# ── Patient selector (instant — no pipeline dependency) ───────────────────────
-col1, col2 = st.columns([2, 1])
-with col1:
-    filter_mode = st.radio(
-        "Retrieval scope",
-        ["All patients", "Single patient"],
-        horizontal=True,
-    )
-with col2:
-    hadm_filter = None
-    if filter_mode == "Single patient":
-        hadm_filter = st.selectbox("Select patient (HADM ID)", hadm_ids)
+# ── Patient selector ──────────────────────────────────────────────────────────
+hadm_filter = st.selectbox("Select patient (HADM ID)", hadm_ids)
 
 st.divider()
 

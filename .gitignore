@@ -2,11 +2,45 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Secrets & local overrides
 .env
+.env.*
+!.env.example
+
+# MIMIC-IV raw data / large local caches (keep structure; do not commit PHI)
 data/mimic/
+data/synthetic/
+
+# ChromaDB persistent store (rebuilt from pipeline)
 chroma_db/
+
+# Evaluation artefacts (JSON/CSV runs; regenerate with eval.run_eval)
 eval/results/
-.DS_Store
+
+# Python packaging & tooling
 *.egg-info/
+build/
 dist/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Node / frontend (Vite + React)
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# OS & editors
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
